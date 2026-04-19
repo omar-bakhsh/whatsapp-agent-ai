@@ -1,18 +1,9 @@
-# الأمان والحماية (هام جداً)
+node_modules/
 .env
 .wwebjs_auth/
 .wwebjs_cache/
-
-# الملفات المؤقتة والمكتبات
-node_modules/
+reminders.json
+sessions.json
+appointments.csv
+scratch.js
 package-lock.json
-npm-debug.log
-debug_ai.js
-debug_groq.js
-test_ai_update.js
-test_ai_update_groq.js
-read_pdf.js
-
-# ملفات النظام
-.DS_Store
-Thumbs.db
