@@ -7,3 +7,8 @@ sessions.json
 appointments.csv
 scratch.js
 package-lock.json
+agent.db
+scratch/
+test_greeting.js
+*.xlsx
+*.csv

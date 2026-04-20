@@ -5,12 +5,14 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const systemPrompt = require('./prompt');
 const schedule = require('node-schedule');
-const fs = require('fs');
-const path = require('path');
+const db = require('./database');
 
-const REMINDERS_FILE = path.join(__dirname, 'reminders.json');
-const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
-const APPOINTMENTS_FILE = path.join(__dirname, 'appointments.csv');
+// تهيئة قاعدة البيانات
+db.initDb();
+
+// إعداد Gemini AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
 // أرقام الإدارة
 const ADMIN_NUMBERS = {
@@ -19,39 +21,29 @@ const ADMIN_NUMBERS = {
     abuAli: '966562185308@c.us'
 };
 
-// دالة لحفظ التذكيرات في ملف
+// دالة لحفظ التذكيرات في قاعدة البيانات
 function saveReminder(userId, apptDate, reminderDate) {
-    let reminders = [];
     try {
-        if (fs.existsSync(REMINDERS_FILE)) {
-            reminders = JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8'));
-        }
-        reminders.push({ userId, apptDate, reminderDate });
-        fs.writeFileSync(REMINDERS_FILE, JSON.stringify(reminders, null, 2));
+        db.saveReminder(userId, apptDate, reminderDate);
     } catch (e) { console.error("Error saving reminder:", e); }
 }
 
 // دالة لتحميل وإعادة جدولة التذكيرات عند التشغيل
 function reloadReminders(clientRef) {
-    if (!fs.existsSync(REMINDERS_FILE)) return;
     try {
-        let reminders = JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf8'));
+        const pendingReminders = db.getPendingReminders();
         const now = new Date();
-        const futureReminders = reminders.filter(r => new Date(r.reminderDate) > now);
         
-        futureReminders.forEach(r => {
+        pendingReminders.forEach(r => {
             schedule.scheduleJob(new Date(r.reminderDate), () => {
                 clientRef.sendMessage(r.userId, `تذكير ⏰: نود تذكيرك بموعدك القادم مع مركز متخصص مازدا بعد ساعة من الآن. ننتظر زيارتك!`)
+                    .then(() => db.markReminderSent(r.id))
                     .catch(err => console.error('خطأ في إرسال التذكير المجدول:', err));
             });
         });
-        fs.writeFileSync(REMINDERS_FILE, JSON.stringify(futureReminders, null, 2));
-        if (futureReminders.length > 0) console.log(`[إعادة تحميل] تم استعادة ${futureReminders.length} تذكير.`);
+        if (pendingReminders.length > 0) console.log(`[إعادة تحميل] تم استعادة ${pendingReminders.length} تذكير من قاعدة البيانات.`);
     } catch (e) { console.error("Error reloading reminders:", e); }
 }
-
-// كائن لحفظ تاريخ المحادثة بشكل موحد لكل عميل
-let sessions = {};
 
 // دالة لمعرفة هل نحن في وقت العمل
 function isWorkingHours() {
@@ -67,50 +59,24 @@ function isWorkingHours() {
     return time >= 8.5 && time <= 17.5; // 8:30 AM to 5:30 PM
 }
 
-// دالة لحفظ الجلسات في ملف
-function saveSessions() {
+// دالة لتسجيل الموعد
+function logAppointment(userId, apptDate, branch) {
     try {
-        fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
-    } catch (e) { console.error("Error saving sessions:", e); }
+        db.saveAppointment(userId, apptDate, branch);
+        console.log(`[موعد جديد] تم تسجيل موعد للعميل ${userId} في قاعدة البيانات.`);
+    } catch (e) { console.error("Error logging appointment:", e); }
 }
-
-// تحميل الجلسات عند التشغيل
-function loadSessions() {
-    if (fs.existsSync(SESSIONS_FILE)) {
-        try {
-            sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-        } catch (e) { sessions = {}; }
-    }
-}
-
-// دالة لتسجيل الموعد في CSV
-function logAppointmentToCSV(userId, apptDate, branch) {
-    const cleanPhone = userId.split('@')[0];
-    const cleanDate = apptDate.replace('T', ' ');
-    const headers = '\ufeffالتاريخ والوقت,الجوال,الفرع\n'; // إضافة \ufeff لدعم العربية في إكسل
-    const row = `${cleanDate},${cleanPhone},${branch}\n`;
-    try {
-        if (!fs.existsSync(APPOINTMENTS_FILE)) {
-            fs.writeFileSync(APPOINTMENTS_FILE, headers, 'utf8');
-        }
-        fs.appendFileSync(APPOINTMENTS_FILE, row, 'utf8');
-    } catch (e) { console.error("Error logging CSV:", e); }
-}
-
-loadSessions();
 
 // دالة لتنظيف وتجهيز التاريخ للذكاء الاصطناعي
 function getFormattedHistory(userId) {
-    if (!sessions[userId]) {
-        sessions[userId] = [];
-    }
-    return sessions[userId];
+    return db.getHistory(userId);
 }
 
-// دالة الرد عبر Gemini
-async function getGeminiResponse(userId, messageText) {
+// دالة الرد عبر Gemini (تدعم النصوص والصوت)
+async function getGeminiResponse(userId, messageText, media = null) {
     const history = getFormattedHistory(userId);
     const currentSettings = systemPrompt + `\n\nملاحظة هامة: تاريخ ووقت اليوم هو ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })}\nاستخدم هذا التاريخ بدقة عند تحديد المواعيد ولا تنسى إرسال التاج [APPT:YYYY-MM-DD HH:MM] عند الحجز.`;
+    
     const chat = geminiModel.startChat({
         history: [
             { role: "user", parts: [{ text: currentSettings }] },
@@ -122,7 +88,23 @@ async function getGeminiResponse(userId, messageText) {
         ]
     });
 
-    const result = await chat.sendMessage(messageText);
+    let parts = [];
+    if (media) {
+        parts.push({
+            inlineData: {
+                data: media.data,
+                mimeType: media.mimetype
+            }
+        });
+    }
+    // إذا كانت رسالة صوتية، قد يكون النص فارغاً، في هذه الحالة نضيف رسالة توضيحية للموديل
+    if (messageText && messageText.trim() !== "") {
+        parts.push({ text: messageText });
+    } else if (media) {
+        parts.push({ text: "حلل هذه الرسالة الصوتية وقم بالرد عليها بناءً على مهامك كموظف خدمة عملاء." });
+    }
+
+    const result = await chat.sendMessage(parts);
     return result.response.text();
 }
 
@@ -170,6 +152,24 @@ client.on('message', async message => {
     // تجاهل الحالات (الستوري) وعدم الرد عليها
     if (message.isStatus || message.from === 'status@broadcast') return;
 
+    // التعامل مع الوسائط (الصوتيات)
+    let mediaData = null;
+    if (message.hasMedia) {
+        if (message.type === 'ptt' || message.type === 'audio') {
+            try {
+                mediaData = await message.downloadMedia();
+            } catch (err) {
+                console.error("خطأ في تحميل الرسالة الصوتية:", err);
+            }
+        } else {
+            // تجاهل الصور والفيديوهات والملفات الأخرى حالياً
+            return;
+        }
+    }
+
+    // تجاهل الرسائل الفارغة (إذا لم تكن صوتية)
+    if (!mediaData && (!message.body || message.body.trim() === "")) return;
+
     const chat = await message.getChat();
     if (chat.isGroup) return;
 
@@ -182,12 +182,17 @@ client.on('message', async message => {
 
         try {
             // المحاولة الأولى: Gemini
-            console.log("محاولة الرد عبر Gemini...");
-            aiResponse = await getGeminiResponse(userId, message.body);
+            console.log(mediaData ? "[تحليل صوتي] جاري المعالجة عبر Gemini..." : "محاولة الرد عبر Gemini...");
+            aiResponse = await getGeminiResponse(userId, message.body, mediaData);
         } catch (geminiError) {
-            console.error("فشل Gemini، جاري التبديل إلى Llama 3...");
-            // المحاولة الثانية: Llama 3 عبر Groq
-            aiResponse = await getGroqResponse(userId, message.body);
+            console.error("فشل Gemini:", geminiError.message);
+            if (mediaData) {
+                aiResponse = "نعتذر منك، لم أتمكن من معالجة الرسالة الصوتية حالياً. هل يمكنك كتابة استفسارك نصياً؟";
+            } else {
+                console.log("جاري التبديل إلى Llama 3...");
+                // المحاولة الثانية: Llama 3 عبر Groq (للنصوص فقط)
+                aiResponse = await getGroqResponse(userId, message.body);
+            }
         }
 
         // --- Appointment Parsing & Notifications ---
@@ -221,8 +226,8 @@ client.on('message', async message => {
                     }, 5000);
                 }
 
-                // 2. تسجيل الموعد في CSV
-                logAppointmentToCSV(userId, apptTimeStr, branchName);
+                // 2. تسجيل الموعد في قاعدة البيانات
+                logAppointment(userId, apptTimeStr, branchName);
 
                 // 3. تنبيه الإدارة
                 let adminToNotify = ADMIN_NUMBERS.abuAli; // افتراضياً أبو علي
@@ -244,13 +249,14 @@ client.on('message', async message => {
             }
         }
 
-        // حفظ الرسالة ورد البوت في التاريخ الموحد
-        if (!sessions[userId]) sessions[userId] = [];
-        sessions[userId].push({ role: 'user', content: message.body });
-        sessions[userId].push({ role: 'assistant', content: aiResponse });
+        // حفظ الرسالة ورد البوت في قاعدة البيانات
+        const history = db.getHistory(userId);
+        const userContent = mediaData ? `[رسالة صوتية]: ${message.body || ""}` : message.body;
+        history.push({ role: 'user', content: userContent });
+        history.push({ role: 'assistant', content: aiResponse });
 
-        if (sessions[userId].length > 10) sessions[userId].shift();
-        saveSessions(); // حفظ الجلسة فوراً
+        if (history.length > 20) history.shift(); // زيادة الذاكرة إلى 20 رسالة
+        db.saveHistory(userId, history);
 
         message.reply(aiResponse);
 
