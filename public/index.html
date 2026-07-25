@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم الواتساب الذكي - مازدا</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fa-solid fa-robot"></i>
+                <span>واتساب الذكي</span>
+            </div>
+            <p class="subtitle">مركز صيانة مازدا</p>
+        </div>
+        <ul class="nav-links">
+            <li class="active" data-tab="dashboard"><i class="fa-solid fa-chart-pie"></i> الرئيسية</li>
+            <li data-tab="appointments"><i class="fa-regular fa-calendar-check"></i> المواعيد</li>
+            <li data-tab="sessions"><i class="fa-brands fa-whatsapp"></i> محادثات العملاء</li>
+            <li data-tab="reminders"><i class="fa-regular fa-bell"></i> التذكيرات</li>
+            <li data-tab="settings"><i class="fa-solid fa-gear"></i> الإعدادات</li>
+        </ul>
+        <div class="sidebar-footer">
+            <div class="status-indicator">
+                <div class="pulse-dot online"></div>
+                <span>البوت متصل</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Header -->
+        <header class="top-nav">
+            <div class="search-bar">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" placeholder="ابحث عن عميل، رقم، أو موعد...">
+            </div>
+            <div class="user-profile">
+                <div class="notification-btn">
+                    <i class="fa-regular fa-bell"></i>
+                    <span class="badge">3</span>
+                </div>
+                <div class="avatar">م</div>
+                <span class="admin-name">مدير النظام</span>
+            </div>
+        </header>
+
+        <!-- Dashboard View -->
+        <div class="view-section active" id="view-dashboard">
+            <h1 class="page-title">نظرة عامة</h1>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon blue"><i class="fa-solid fa-calendar-check"></i></div>
+                    <div class="stat-info">
+                        <h3>المواعيد (هذا الشهر)</h3>
+                        <p class="stat-value" id="stat-appointments">0</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green"><i class="fa-solid fa-users"></i></div>
+                    <div class="stat-info">
+                        <h3>العملاء النشطون</h3>
+                        <p class="stat-value" id="stat-customers">0</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon purple"><i class="fa-solid fa-message"></i></div>
+                    <div class="stat-info">
+                        <h3>الرسائل المعالجة</h3>
+                        <p class="stat-value" id="stat-messages">0</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon amber"><i class="fa-solid fa-bullhorn"></i></div>
+                    <div class="stat-info">
+                        <h3>رسائل البث</h3>
+                        <p class="stat-value" id="stat-broadcasts">0</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-section">
+                <!-- Placeholder for future charts / tables -->
+                <div class="card recent-appointments">
+                    <div class="card-header">
+                        <h2>آخر المواعيد المحجوزة</h2>
+                        <button class="btn-primary" onclick="showTab('appointments')">عرض الكل</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="styled-table" id="dashboard-recent-appt">
+                            <thead>
+                                <tr>
+                                    <th>العميل</th>
+                                    <th>التاريخ</th>
+                                    <th>الفرع</th>
+                                    <th>الحالة</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Data populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Appointments View -->
+        <div class="view-section" id="view-appointments">
+            <h1 class="page-title">جميع المواعيد</h1>
+            <div class="card full-height">
+                <div class="table-responsive">
+                    <table class="styled-table" id="table-appointments">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>العميل (رقم الجوال)</th>
+                                <th>تاريخ الموعد</th>
+                                <th>الفرع</th>
+                                <th>تاريخ التسجيل</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Data populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sessions View -->
+        <div class="view-section" id="view-sessions">
+            <h1 class="page-title">سجل المحادثات مع البوت</h1>
+            <div class="card full-height">
+                <div class="table-responsive">
+                    <table class="styled-table" id="table-sessions">
+                        <thead>
+                            <tr>
+                                <th>العميل</th>
+                                <th>مرات التواصل</th>
+                                <th>وضع الاستعداد</th>
+                                <th>آخر تحديث</th>
+                                <th>تصدير/عرض</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Data populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reminders View -->
+        <div class="view-section" id="view-reminders">
+            <h1 class="page-title">التذكيرات المجدولة</h1>
+            <div class="card full-height">
+                <div class="table-responsive">
+                    <table class="styled-table" id="table-reminders">
+                        <thead>
+                            <tr>
+                                <th>العميل</th>
+                                <th>الموعد الفعلي</th>
+                                <th>وقت التذكير</th>
+                                <th>الإرسال</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Data populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

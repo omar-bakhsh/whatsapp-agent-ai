@@ -1,0 +1,6 @@
+2026/07/25-10:10:08.441 7edc Creating DB C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Local Storage\leveldb since it was missing.
+2026/07/25-10:10:08.452 7edc Reusing MANIFEST C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Local Storage\leveldb/MANIFEST-000001
+2026/07/25-10:10:08.453 7edc Recovering log #17
+2026/07/25-10:10:08.454 7edc Reusing old log C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Local Storage\leveldb/000017.log 
+2026/07/25-10:10:08.455 7edc Delete type=2 #15
+2026/07/25-10:10:08.455 7edc Delete type=2 #18

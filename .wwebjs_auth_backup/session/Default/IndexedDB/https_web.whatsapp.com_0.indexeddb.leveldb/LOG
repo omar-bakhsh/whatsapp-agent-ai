@@ -1,0 +1,6 @@
+2026/07/25-10:13:48.938 82b8 Creating DB C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb since it was missing.
+2026/07/25-10:13:48.942 82b8 Reusing MANIFEST C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/25-10:13:48.942 82b8 Recovering log #583
+2026/07/25-10:13:48.943 82b8 Reusing old log C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000583.log 
+2026/07/25-10:13:48.944 82b8 Delete type=2 #582
+2026/07/25-10:13:48.944 82b8 Delete type=2 #585

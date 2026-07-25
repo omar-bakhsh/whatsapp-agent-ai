@@ -11,9 +11,15 @@ function initDb() {
         CREATE TABLE IF NOT EXISTS sessions (
             userId TEXT PRIMARY KEY,
             history TEXT,
+            standbyUntil DATETIME,
             lastUpdate DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `).run();
+
+    // إضافة العمود إذا لم يكن موجوداً (للمشاريع القائمة)
+    try {
+        db.prepare("ALTER TABLE sessions ADD COLUMN standbyUntil DATETIME").run();
+    } catch (e) {}
 
     // جدول التذكيرات
     db.prepare(`
@@ -36,6 +42,16 @@ function initDb() {
             createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `).run();
+
+    // جدول سجل البث الترويجي
+    db.prepare(`
+        CREATE TABLE IF NOT EXISTS broadcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sentCount INTEGER,
+            message TEXT,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `).run();
 }
 
 // وظائف الجلسات
@@ -53,6 +69,28 @@ function saveHistory(userId, history) {
             history = excluded.history,
             lastUpdate = CURRENT_TIMESTAMP
     `).run(userId, historyJson);
+}
+
+function setStandby(userId, hours) {
+    const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+    db.prepare(`
+        INSERT INTO sessions (userId, standbyUntil)
+        VALUES (?, ?)
+        ON CONFLICT(userId) DO UPDATE SET standbyUntil = excluded.standbyUntil
+    `).run(userId, until);
+}
+
+function getStandby(userId) {
+    const row = db.prepare('SELECT standbyUntil FROM sessions WHERE userId = ?').get(userId);
+    if (!row || !row.standbyUntil) return false;
+    return new Date(row.standbyUntil) > new Date();
+}
+
+function getInactiveCustomers(months) {
+    return db.prepare(`
+        SELECT userId FROM sessions 
+        WHERE lastUpdate < DATETIME('now', '-' || ? || ' months')
+    `).all(months);
 }
 
 // وظائف التذكيرات
@@ -79,7 +117,26 @@ function saveAppointment(userId, apptDate, branch) {
     `).run(userId, apptDate, branch);
 }
 
-// وظيفة الإحصائيات (مثال)
+// وظائف الإحصائيات المتقدمة للتقارير
+function saveBroadcastLog(count, message) {
+    db.prepare("INSERT INTO broadcasts (sentCount, message) VALUES (?, ?)").run(count, message);
+}
+
+function getDailyStats() {
+    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    const appts = db.prepare("SELECT COUNT(*) as count FROM appointments WHERE date(createdAt) = date('now', 'localtime')").get().count;
+    const broadcastMsgs = db.prepare("SELECT SUM(sentCount) as count FROM broadcasts WHERE date(createdAt) = date('now', 'localtime')").get().count || 0;
+    const newCustomers = db.prepare("SELECT COUNT(*) as count FROM sessions WHERE date(lastUpdate) = date('now', 'localtime')").get().count;
+
+    return {
+        date,
+        appts,
+        broadcastMsgs,
+        newCustomers
+    };
+}
+
 function getMonthlyStats() {
     return db.prepare(`
         SELECT strftime('%Y-%m', createdAt) as month, COUNT(*) as total
@@ -96,5 +153,10 @@ module.exports = {
     getPendingReminders,
     markReminderSent,
     saveAppointment,
-    getMonthlyStats
+    getMonthlyStats,
+    setStandby,
+    getStandby,
+    getInactiveCustomers,
+    saveBroadcastLog,
+    getDailyStats
 };

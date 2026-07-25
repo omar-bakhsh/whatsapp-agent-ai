@@ -21,6 +21,9 @@ const ADMIN_NUMBERS = {
     abuAli: '966562185308@c.us'
 };
 
+// تتبع الرسائل المرسلة من البوت لتجنب تفعيل وضع الاستعداد ذاتياً
+const botMessages = new Set();
+
 // دالة لحفظ التذكيرات في قاعدة البيانات
 function saveReminder(userId, apptDate, reminderDate) {
     try {
@@ -135,7 +138,21 @@ async function getGroqResponse(userId, messageText) {
 }
 
 const client = new Client({
-    authStrategy: new LocalAuth()
+    authStrategy: new LocalAuth(),
+    authTimeoutMs: 120000,
+    puppeteer: {
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-blink-features=AutomationControlled',
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        ],
+    }
 });
 
 client.on('qr', (qr) => {
@@ -143,10 +160,70 @@ client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', () => {
-    console.log('تم تشغيل البوت مع نظام التبديل الذكي (Gemini + Llama 3) 🚀');
-    reloadReminders(client);
+client.on('authenticated', () => {
+    console.log('✅ تم العثور على جلسة محفوظة. جاري الاتصال بواتساب مباشرة...');
 });
+
+client.on('loading_screen', (percent, message) => {
+    console.log(`⏳ جاري مزامنة المحادثات: ${percent}%`);
+});
+
+client.on('ready', () => {
+    console.log('تم تشغيل البوت بنجاح! يمكنك الآن البدء في تواصل العملاء 🚀');
+    reloadReminders(client);
+
+    // جدولة التقرير اليومي الساعة 9 مساءً بتوقيت الرياض
+    schedule.scheduleJob({ hour: 21, minute: 0, tz: 'Asia/Riyadh' }, () => {
+        sendDailyReport();
+    });
+});
+
+// تفعيل وضع الاستعداد عند قيام الموظف بالرد يدوياً من الجوال أو الويب
+client.on('message_create', async (message) => {
+    if (message.fromMe && !botMessages.has(message.id._serialized)) {
+        const userId = message.to;
+        if (userId.includes('@c.us') && !Object.values(ADMIN_NUMBERS).includes(userId)) {
+            console.log(`[تنبيه] تم اكتشاف رد يدوي لـ ${userId}. تفعيل وضع الاستعداد لمدة ساعتين.`);
+            db.setStandby(userId, 2);
+        }
+    }
+});
+
+// دالة البث الترويجي
+async function runBroadcast(months, text) {
+    const customers = db.getInactiveCustomers(months);
+    console.log(`[بث] جاري إرسال ${customers.length} رسالة...`);
+    let sentCount = 0;
+    for (let i = 0; i < customers.length; i++) {
+        try {
+            const msg = await client.sendMessage(customers[i].userId, text);
+            botMessages.add(msg.id._serialized);
+            sentCount++;
+            console.log(`[بث] تم الإرسال إلى ${customers[i].userId} (${i+1}/${customers.length})`);
+            // تأخير عشوائي بين 5-10 ثواني لتجنب الحظر
+            await new Promise(res => setTimeout(res, 5000 + Math.random() * 5000));
+        } catch (e) { console.error(`[بث] فشل الإرسال لـ ${customers[i].userId}:`, e.message); }
+    }
+    db.saveBroadcastLog(sentCount, text);
+    console.log('[بث] اكتملت العملية.');
+}
+
+// دالة إرسال التقرير اليومي للإدارة
+async function sendDailyReport() {
+    try {
+        const stats = db.getDailyStats();
+        const reportMsg = `📊 *التقرير اليومي لنظام متخصص مازدا* 📊\n\n` +
+            `📅 التاريخ: ${stats.date}\n` +
+            `---------------------------\n` +
+            `✅ المواعيد المحجوزة اليوم: ${stats.appts}\n` +
+            `📢 رسائل البث الترويجي: ${stats.broadcastMsgs}\n` +
+            `👤 عملاء جدد/متفاعلون: ${stats.newCustomers}\n\n` +
+            `✨ نظامك يعمل بكفاءة!`;
+
+        await client.sendMessage(ADMIN_NUMBERS.abuAli, reportMsg);
+        console.log('[تقرير] تم إرسال التقرير اليومي بنجاح.');
+    } catch (e) { console.error('[تقرير] فشل إرسال التقرير:', e); }
+}
 
 client.on('message', async message => {
     // تجاهل الحالات (الستوري) وعدم الرد عليها
@@ -170,14 +247,54 @@ client.on('message', async message => {
     // تجاهل الرسائل الفارغة (إذا لم تكن صوتية)
     if (!mediaData && (!message.body || message.body.trim() === "")) return;
 
-    const chat = await message.getChat();
-    if (chat.isGroup) return;
+    let chat;
+    try {
+        chat = await message.getChat();
+    } catch (chatError) {
+        console.error(`⚠️ خطأ في جلب بيانات المحادثة (${message.from}):`, chatError.message);
+        // لن نقوم بالخروج، سنكمل التنفيذ لأننا قد نكون في مرحلة المزامنة
+    }
+    
+    // التحقق من المجموعات باستخدام المعرف بدلاً من الكائن
+    if (message.from.endsWith('@g.us')) return;
 
     const userId = message.from;
+
+    // --- نظام أوامر الإدارة ---
+    if (Object.values(ADMIN_NUMBERS).includes(userId)) {
+        if (message.body.startsWith('!بث')) {
+            const parts = message.body.split(' ');
+            if (parts.length < 3) return message.reply('استخدم الصيغة: !بث [الأشهر] [النص]');
+            const months = parseInt(parts[1]);
+            const text = parts.slice(2).join(' ');
+            message.reply(`جاري بدء البث لـ ${months} أشهر...`);
+            runBroadcast(months, text);
+            return;
+        }
+        if (message.body.startsWith('!تفعيل')) {
+             const target = message.body.split(' ')[1] + '@c.us';
+             db.setStandby(target, 0);
+             return message.reply(`تم إلغاء وضع الاستعداد للرقم ${target}. البوت سيعاود الرد.`);
+        }
+        if (message.body.startsWith('!تعطيل')) {
+            const target = message.body.split(' ')[1] + '@c.us';
+            db.setStandby(target, 24);
+            return message.reply(`تم تعطيل البوت للرقم ${target} لمدة 24 ساعة.`);
+       }
+    }
+
+    // التحقق من وضع الاستعداد (Human-in-the-Loop)
+    if (db.getStandby(userId)) {
+        console.log(`[تخطي] العميل ${userId} في وضع الاستعداد. الرد يدوي حالياً.`);
+        return;
+    }
+
     console.log(`[رسالة جديدة] من ${userId}: ${message.body}`);
 
     try {
-        chat.sendStateTyping();
+        if (chat) {
+            chat.sendStateTyping();
+        }
         let aiResponse = "";
 
         try {
@@ -258,7 +375,10 @@ client.on('message', async message => {
         if (history.length > 20) history.shift(); // زيادة الذاكرة إلى 20 رسالة
         db.saveHistory(userId, history);
 
-        message.reply(aiResponse);
+        const responseMsg = await message.reply(aiResponse);
+        if (responseMsg && responseMsg.id) {
+            botMessages.add(responseMsg.id._serialized);
+        }
 
     } catch (finalError) {
         console.error("فشل كلا الموديلين:", finalError);
@@ -271,4 +391,8 @@ client.on('message', async message => {
     }
 });
 
-client.initialize();
+console.log('جاري تهيئة نظام الاتصال بواتساب... (قد يستغرق 30-40 ثانية في حال وجود جلسة سابقة)');
+
+client.initialize().catch(err => {
+    console.error('خطأ قاتل أثناء التهيئة العميل:', err);
+});

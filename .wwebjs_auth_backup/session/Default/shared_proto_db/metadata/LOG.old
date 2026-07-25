@@ -1,0 +1,4 @@
+2026/07/25-10:10:08.474 6520 Creating DB C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\shared_proto_db\metadata since it was missing.
+2026/07/25-10:10:08.483 6520 Reusing MANIFEST C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\shared_proto_db\metadata/MANIFEST-000001
+2026/07/25-10:10:08.484 6520 Recovering log #3
+2026/07/25-10:10:08.484 6520 Reusing old log C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\shared_proto_db\metadata/000003.log 

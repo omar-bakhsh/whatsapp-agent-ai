@@ -1,0 +1,4 @@
+2026/07/25-10:10:08.416 8c24 Creating DB C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Sync Data\LevelDB since it was missing.
+2026/07/25-10:10:08.422 8c24 Reusing MANIFEST C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/07/25-10:10:08.422 8c24 Recovering log #3
+2026/07/25-10:10:08.422 8c24 Reusing old log C:\Users\Dell\OneDrive\Desktop\AUTOMATION\whatsapp-agent\.wwebjs_auth\session\Default\Sync Data\LevelDB/000003.log 
