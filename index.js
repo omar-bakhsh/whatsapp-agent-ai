@@ -94,11 +94,11 @@ function isWorkingHours() {
     return time >= 8.5 && time <= 17.5; // 8:30 AM to 5:30 PM
 }
 
-// دالة لتسجيل الموعد
-function logAppointment(userId, apptDate, branch) {
+// دالة لتسجيل الموعد مع حفظ بيانات العميل والسيارة
+function logAppointment(userId, apptDate, branch, customerName = null, carModel = null, notes = null) {
     try {
-        db.saveAppointment(userId, apptDate, branch);
-        console.log(`[موعد جديد] تم تسجيل موعد للعميل ${userId} في قاعدة البيانات.`);
+        db.saveAppointment(userId, apptDate, branch, customerName, carModel, notes);
+        console.log(`[موعد جديد] تم تسجيل موعد للعميل ${userId} (${customerName || 'بدون اسم'}) في قاعدة البيانات.`);
     } catch (e) { console.error("Error logging appointment:", e); }
 }
 
@@ -107,10 +107,35 @@ function getFormattedHistory(userId) {
     return db.getHistory(userId);
 }
 
+// دالة ذكية لبناء إرشادات النظام مدمجة بملف العميل وسيارته
+function buildSystemPrompt(userId) {
+    const nowRiyadh = new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' });
+    let promptText = systemPrompt + `\n\nملاحظة هامة: تاريخ ووقت اليوم هو ${nowRiyadh}\nاستخدم هذا التاريخ بدقة عند تحديد المواعيد ولا تنسى إرسال التاج [APPT:YYYY-MM-DD HH:MM] عند الحجز.`;
+
+    try {
+        const customer = db.getCustomer(userId);
+        if (customer) {
+            let profileInfo = [];
+            if (customer.name) profileInfo.push(`الاسم: ${customer.name}`);
+            if (customer.carModel) profileInfo.push(`نوع وموديل السيارة: ${customer.carModel}`);
+            if (customer.plateNumber) profileInfo.push(`رقم اللوحة: ${customer.plateNumber}`);
+            if (customer.preferredBranch) profileInfo.push(`الفرع المفضل: ${customer.preferredBranch}`);
+
+            if (profileInfo.length > 0) {
+                promptText += `\n\n[معلومات ملف العميل المسجلة مسبقاً في النظام]:\n${profileInfo.join(' | ')}\n(استخدم هذه البيانات للترحيب به بلباقة وخصوصية مثل ذكر اسمه وسيارته إن ناسب السياق دون إشعاره بأنك تقرأ ملفاً آلياً).`;
+            }
+        }
+    } catch (err) {
+        console.warn('تنبيه أثناء جلب بيانات العميل للبرومبت:', err.message);
+    }
+
+    return promptText;
+}
+
 // دالة الرد عبر Gemini (تدعم النصوص والصوت مع المحاولة عبر عدة موديلات)
 async function getGeminiResponse(userId, messageText, media = null) {
     const history = getFormattedHistory(userId);
-    const currentSettings = systemPrompt + `\n\nملاحظة هامة: تاريخ ووقت اليوم هو ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })}\nاستخدم هذا التاريخ بدقة عند تحديد المواعيد ولا تنسى إرسال التاج [APPT:YYYY-MM-DD HH:MM] عند الحجز.`;
+    const currentSettings = buildSystemPrompt(userId);
     
     let lastError = null;
     for (const modelName of GEMINI_MODELS) {
@@ -161,7 +186,7 @@ async function getGroqResponse(userId, messageText) {
     if (!process.env.GROQ_API_KEY) throw new Error("رابط Groq غير مفعّل");
 
     const history = getFormattedHistory(userId);
-    const currentSettings = systemPrompt + `\n\nملاحظة هامة: تاريخ ووقت اليوم هو ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })}\nاستخدم هذا التاريخ بدقة عند تحديد المواعيد ولا تنسى إرسال التاج [APPT:YYYY-MM-DD HH:MM] عند الحجز.`;
+    const currentSettings = buildSystemPrompt(userId);
     const messages = [
         { role: "system", content: currentSettings },
         ...history,
@@ -440,16 +465,80 @@ client.on('message', async message => {
             }
         }
 
-        // --- Appointment Parsing & Notifications ---
+        // --- 1. استخراج وتحديث ملف العميل التلقائي (Customer Profiling) ---
+        const profileMatch = aiResponse.match(/\[PROFILE:\s*(.*?)\s*\]/i);
+        if (profileMatch) {
+            try {
+                const parts = profileMatch[1].split('|');
+                const profileData = {};
+                for (const part of parts) {
+                    const [k, v] = part.split('=');
+                    if (k && v && v.trim().length > 0) {
+                        const key = k.trim().toLowerCase();
+                        const val = v.trim();
+                        if (key === 'name') profileData.name = val;
+                        else if (key === 'car') profileData.carModel = val;
+                        else if (key === 'plate') profileData.plateNumber = val;
+                        else if (key === 'branch') profileData.preferredBranch = val;
+                    }
+                }
+                if (Object.keys(profileData).length > 0) {
+                    db.upsertCustomer(userId, profileData);
+                    console.log(`[ملف العميل] تم تحديث بيانات العميل ${userId}:`, profileData);
+                }
+            } catch (pErr) {
+                console.error("خطأ في معالجة ملف العميل:", pErr);
+            }
+        }
+
+        // --- 2. كشف الشكاوى والانزعاج والتصعيد العاجل (Escalation Detection) ---
+        const escalateMatch = aiResponse.match(/\[ESCALATE:\s*(.*?)\s*\]/i);
+        if (escalateMatch) {
+            try {
+                const reason = escalateMatch[1].trim();
+                console.log(`[تصعيد عاجل] رصد شكوى للعميل ${userId}: ${reason}`);
+                
+                // تفعيل وضع الاستعداد لمدة 3 ساعات لتدخل الموظف البشري
+                db.setStandby(userId, 3);
+                
+                const customer = db.getCustomer(userId);
+                const adminEscalateMsg = `🚨 *تنبيه شكوى / طلب إدارة عاجل* 🚨\n\n` +
+                    `👤 العميل: ${userId.split('@')[0]}${customer && customer.name ? ` (${customer.name})` : ''}\n` +
+                    `🚗 السيارة: ${customer && customer.carModel ? customer.carModel : 'غير مسجلة'}\n` +
+                    `⚠️ سبب التصعيد: ${reason}\n\n` +
+                    `*تم إيقاف الرد الآلي وتوجيه المحادثة للإدارة للرد المباشر.*`;
+
+                client.sendMessage(ADMIN_NUMBERS.abuAli, adminEscalateMsg).catch(e => console.error('فشل تنبيه الإدارة:', e));
+            } catch (escErr) {
+                console.error("خطأ في معالجة التصعيد:", escErr);
+            }
+        }
+
+        // --- 3. معالجة وتثبيت المواعيد المحجوزة (Smart Booking) ---
         const apptMatch = aiResponse.match(/\[APPT:\s*(.*?)\s*\]/i);
         const branchMatch = aiResponse.match(/\[BRANCH:\s*(.*?)\s*\]/i);
+        const customerMatch = aiResponse.match(/\[CUSTOMER:\s*(.*?)\s*\]/i);
+        const carMatch = aiResponse.match(/\[CAR:\s*(.*?)\s*\]/i);
         
         if (apptMatch) {
             let apptTimeStr = apptMatch[1];
             let branchName = branchMatch ? branchMatch[1] : "غير محدد";
-            
-            // تنظيف الرد من التاجات
-            aiResponse = aiResponse.replace(/\[APPT:.*?\]/gi, '').replace(/\[BRANCH:.*?\]/gi, '').trim();
+            let customerName = customerMatch ? customerMatch[1].trim() : null;
+            let carModel = carMatch ? carMatch[1].trim() : null;
+
+            // استكمال البيانات من ملف العميل إن لم تُذكر في الحجز
+            const existingCust = db.getCustomer(userId);
+            if (!customerName && existingCust && existingCust.name) customerName = existingCust.name;
+            if (!carModel && existingCust && existingCust.carModel) carModel = existingCust.carModel;
+
+            // حفظ بيانات العميل المستخلصة من الحجز في ملفه
+            if (customerName || carModel || branchName) {
+                db.upsertCustomer(userId, {
+                    name: customerName,
+                    carModel: carModel,
+                    preferredBranch: branchName
+                });
+            }
 
             apptTimeStr = apptTimeStr.replace(' ', 'T'); 
             const apptDate = new Date(apptTimeStr);
@@ -457,7 +546,7 @@ client.on('message', async message => {
             if (!isNaN(apptDate.getTime())) {
                 const now = new Date();
                 
-                // 1. برمجة تذكير للعميل
+                // برمجة تذكير للعميل
                 const reminderDate = new Date(apptDate.getTime() - 60 * 60 * 1000); 
                 if (reminderDate > now) {
                     saveReminder(userId, apptDate, reminderDate);
@@ -471,28 +560,44 @@ client.on('message', async message => {
                     }, 5000);
                 }
 
-                // 2. تسجيل الموعد في قاعدة البيانات
-                logAppointment(userId, apptTimeStr, branchName);
+                // تسجيل الموعد في قاعدة البيانات بكامل تفاصيله
+                logAppointment(userId, apptTimeStr, branchName, customerName, carModel);
 
-                // 3. تنبيه الإدارة
-                let adminToNotify = ADMIN_NUMBERS.abuAli; // افتراضياً أبو علي
+                // تنبيه الإدارة بالموعد وتفاصيل العميل وسيارته
+                let adminToNotify = ADMIN_NUMBERS.abuAli;
                 if (isWorkingHours()) {
                     if (branchName.includes("عسفان")) adminToNotify = ADMIN_NUMBERS.asfan;
                     else if (branchName.includes("كيلو")) adminToNotify = ADMIN_NUMBERS.kilo14;
                 }
                 
-                const adminMsg = `🚨 *حجز جديد* 🚨\n\n👤 العميل: ${userId.split('@')[0]}\n📅 الموعد: ${apptMatch[1]}\n📍 الفرع: ${branchName}\n\nيرجى مراجعة الحجز وتأكيده مع العميل.`;
+                const adminMsg = `🚨 *حجز موعد جديد* 🚨\n\n` +
+                    `👤 العميل: ${userId.split('@')[0]}${customerName ? ` (${customerName})` : ''}\n` +
+                    `🚗 السيارة: ${carModel || 'غير محدد'}\n` +
+                    `📅 الموعد: ${apptMatch[1]}\n` +
+                    `📍 الفرع: ${branchName}\n\n` +
+                    `يرجى مراجعة الحجز وتأكيده مع العميل.`;
+
                 client.sendMessage(adminToNotify, adminMsg).then(() => {
-                    console.log(`[تنبيه الإدارة] تم إرسال تنبيه إلى ${adminToNotify}`);
+                    console.log(`[تنبيه الإدارة] تم إرسال تنبيه حجز موعد إلى ${adminToNotify}`);
                 }).catch(err => console.error('خطأ في تنبيه الإدارة:', err));
 
-                // 4. جدولة رسالة تقييم (بعد 24 ساعة من الموعد)
+                // جدولة رسالة تقييم (بعد 24 ساعة من الموعد)
                 const reviewDate = new Date(apptDate.getTime() + 24 * 60 * 60 * 1000);
                 schedule.scheduleJob(reviewDate, () => {
                     client.sendMessage(userId, `مرحباً بك مجدداً من مركز متخصص مازدا ✨\n\nنأمل أن تكون قد حظيت بتجربة ممتازة معنا. كيف تقيم خدمتنا؟ رأيك يهمنا جداً لتطوير المركز.`).catch(e => {});
                 });
             }
         }
+
+        // تنظيف الرد نهائياً من أي تاجات برمجية قبل إرساله للعميل
+        aiResponse = aiResponse
+            .replace(/\[APPT:.*?\]/gi, '')
+            .replace(/\[BRANCH:.*?\]/gi, '')
+            .replace(/\[CUSTOMER:.*?\]/gi, '')
+            .replace(/\[CAR:.*?\]/gi, '')
+            .replace(/\[PROFILE:.*?\]/gi, '')
+            .replace(/\[ESCALATE:.*?\]/gi, '')
+            .trim();
 
         // محاكاة الكتابة الطبيعية وحماية الرقم من الحظر (Anti-Ban Human Delay)
         const naturalDelay = Math.min(3000, Math.max(1000, aiResponse.length * 15 + Math.random() * 500));

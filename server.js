@@ -69,6 +69,16 @@ app.get('/api/reminders', (req, res) => {
     }
 });
 
+// 5. جلب ملفات وسيارات العملاء (Customer Profiles)
+app.get('/api/customers', (req, res) => {
+    try {
+        const customers = db.getAllCustomers();
+        res.json(customers);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });

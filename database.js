@@ -52,6 +52,31 @@ function initDb() {
             createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `).run();
+
+    // جدول ملفات العملاء وسياراتهم
+    db.prepare(`
+        CREATE TABLE IF NOT EXISTS customers (
+            userId TEXT PRIMARY KEY,
+            name TEXT,
+            carModel TEXT,
+            plateNumber TEXT,
+            preferredBranch TEXT,
+            notes TEXT,
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `).run();
+
+    // ترقية جدول المواعيد لدعم بيانات العميل والسيارة
+    try {
+        db.prepare("ALTER TABLE appointments ADD COLUMN customerName TEXT").run();
+    } catch (e) {}
+    try {
+        db.prepare("ALTER TABLE appointments ADD COLUMN carModel TEXT").run();
+    } catch (e) {}
+    try {
+        db.prepare("ALTER TABLE appointments ADD COLUMN notes TEXT").run();
+    } catch (e) {}
 }
 
 // وظائف الجلسات
@@ -110,11 +135,43 @@ function markReminderSent(id) {
 }
 
 // وظائف المواعيد
-function saveAppointment(userId, apptDate, branch) {
+function saveAppointment(userId, apptDate, branch, customerName = null, carModel = null, notes = null) {
     db.prepare(`
-        INSERT INTO appointments (userId, apptDate, branch)
-        VALUES (?, ?, ?)
-    `).run(userId, apptDate, branch);
+        INSERT INTO appointments (userId, apptDate, branch, customerName, carModel, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, apptDate, branch, customerName, carModel, notes);
+}
+
+// وظائف إدارة ملفات العملاء وسياراتهم
+function getCustomer(userId) {
+    return db.prepare('SELECT * FROM customers WHERE userId = ?').get(userId);
+}
+
+function upsertCustomer(userId, data = {}) {
+    const existing = getCustomer(userId);
+    const name = data.name || (existing && existing.name) || null;
+    const carModel = data.carModel || (existing && existing.carModel) || null;
+    const plateNumber = data.plateNumber || (existing && existing.plateNumber) || null;
+    const preferredBranch = data.preferredBranch || (existing && existing.preferredBranch) || null;
+    const notes = data.notes || (existing && existing.notes) || null;
+
+    db.prepare(`
+        INSERT INTO customers (userId, name, carModel, plateNumber, preferredBranch, notes, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(userId) DO UPDATE SET
+            name = COALESCE(excluded.name, customers.name),
+            carModel = COALESCE(excluded.carModel, customers.carModel),
+            plateNumber = COALESCE(excluded.plateNumber, customers.plateNumber),
+            preferredBranch = COALESCE(excluded.preferredBranch, customers.preferredBranch),
+            notes = COALESCE(excluded.notes, customers.notes),
+            updatedAt = CURRENT_TIMESTAMP
+    `).run(userId, name, carModel, plateNumber, preferredBranch, notes);
+
+    return getCustomer(userId);
+}
+
+function getAllCustomers() {
+    return db.prepare('SELECT * FROM customers ORDER BY updatedAt DESC').all();
 }
 
 // وظائف الإحصائيات المتقدمة للتقارير
@@ -153,6 +210,9 @@ module.exports = {
     getPendingReminders,
     markReminderSent,
     saveAppointment,
+    getCustomer,
+    upsertCustomer,
+    getAllCustomers,
     getMonthlyStats,
     setStandby,
     getStandby,
@@ -160,3 +220,4 @@ module.exports = {
     saveBroadcastLog,
     getDailyStats
 };
+
