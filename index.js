@@ -297,7 +297,12 @@ client.on('auth_failure', (msg) => {
 });
 
 client.on('loading_screen', (percent, message) => {
-    console.log(`⏳ جاري مزامنة المحادثات: ${percent}%`);
+    if (percent >= 99) {
+        console.log(`⏳ جاري مزامنة المحادثات: 100% ✅ (اكتملت المزامنة بنجاح)`);
+        console.log(`🚀 جاري التحميل النهائي وتجهيز النظام للعمل...`);
+    } else {
+        console.log(`⏳ جاري مزامنة المحادثات: ${percent}%`);
+    }
 });
 
 client.on('change_state', (state) => {
@@ -310,7 +315,9 @@ client.on('disconnected', (reason) => {
 });
 
 client.on('ready', () => {
-    console.log('تم تشغيل البوت بنجاح! يمكنك الآن البدء في تواصل العملاء 🚀');
+    console.log('==================================================');
+    console.log('✅ تم تشغيل البوت بنجاح 100%! جاهز لاستقبال رسائل العملاء 🚀');
+    console.log('==================================================');
     reconnectAttempts = 0;
     isReconnecting = false;
     reloadReminders(client);
