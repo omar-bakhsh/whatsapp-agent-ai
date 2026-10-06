@@ -10,9 +10,21 @@ const db = require('./database');
 // تهيئة قاعدة البيانات
 db.initDb();
 
-// إعداد Gemini AI
+// إعداد Gemini AI والموديلات المتاحة مع دعم التبديل التلقائي عند الضغط
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+const GEMINI_MODELS = [
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-3.1-flash-lite'
+];
+
+// قائمة موديلات Groq الاحتياطية
+const GROQ_MODELS = [
+    'openai/gpt-oss-120b',
+    'qwen/qwen3.8-27b',
+    'allam-2-7b'
+];
 
 // أرقام الإدارة
 const ADMIN_NUMBERS = {
@@ -21,8 +33,28 @@ const ADMIN_NUMBERS = {
     abuAli: '966562185308@c.us'
 };
 
-// تتبع الرسائل المرسلة من البوت لتجنب تفعيل وضع الاستعداد ذاتياً
+// تتبع الرسائل المرسلة من البوت لتجنب تفعيل وضع الاستعداد ذاتياً (مع سقف محدد للذاكرة)
 const botMessages = new Set();
+function trackBotMessage(id) {
+    if (!id) return;
+    botMessages.add(id);
+    if (botMessages.size > 1500) {
+        const oldestId = botMessages.values().next().value;
+        botMessages.delete(oldestId);
+    }
+}
+
+// قفل معالجة لكل عميل لمنع التكرار والتداخل عند إرسال رسائل متتالية سريعة
+const processingUsers = new Set();
+
+// حماية العملية من الانهيار غير المتوقع (Crash Prevention Guardians)
+process.on('uncaughtException', (err) => {
+    console.error('⚠️ [Uncaught Exception - تم احتواء الخطأ]:', err.message || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('⚠️ [Unhandled Rejection - تم احتواء الخطأ]:', reason);
+});
 
 // دالة لحفظ التذكيرات في قاعدة البيانات
 function saveReminder(userId, apptDate, reminderDate) {
@@ -75,43 +107,56 @@ function getFormattedHistory(userId) {
     return db.getHistory(userId);
 }
 
-// دالة الرد عبر Gemini (تدعم النصوص والصوت)
+// دالة الرد عبر Gemini (تدعم النصوص والصوت مع المحاولة عبر عدة موديلات)
 async function getGeminiResponse(userId, messageText, media = null) {
     const history = getFormattedHistory(userId);
     const currentSettings = systemPrompt + `\n\nملاحظة هامة: تاريخ ووقت اليوم هو ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Riyadh' })}\nاستخدم هذا التاريخ بدقة عند تحديد المواعيد ولا تنسى إرسال التاج [APPT:YYYY-MM-DD HH:MM] عند الحجز.`;
     
-    const chat = geminiModel.startChat({
-        history: [
-            { role: "user", parts: [{ text: currentSettings }] },
-            { role: "model", parts: [{ text: "فهمت. سأقوم بدوري كممثل خدمة عملاء لمركز متخصص مازدا بكل احترافية." }] },
-            ...history.map(msg => ({
-                role: msg.role === 'user' ? 'user' : 'model',
-                parts: [{ text: msg.content }]
-            }))
-        ]
-    });
+    let lastError = null;
+    for (const modelName of GEMINI_MODELS) {
+        try {
+            const model = genAI.getGenerativeModel({ model: modelName });
+            const chat = model.startChat({
+                history: [
+                    { role: "user", parts: [{ text: currentSettings }] },
+                    { role: "model", parts: [{ text: "فهمت. سأقوم بدوري كممثل خدمة عملاء لمركز متخصص مازدا بكل احترافية." }] },
+                    ...history.map(msg => ({
+                        role: msg.role === 'user' ? 'user' : 'model',
+                        parts: [{ text: msg.content }]
+                    }))
+                ]
+            });
 
-    let parts = [];
-    if (media) {
-        parts.push({
-            inlineData: {
-                data: media.data,
-                mimeType: media.mimetype
+            let parts = [];
+            if (media) {
+                parts.push({
+                    inlineData: {
+                        data: media.data,
+                        mimeType: media.mimetype
+                    }
+                });
             }
-        });
-    }
-    // إذا كانت رسالة صوتية، قد يكون النص فارغاً، في هذه الحالة نضيف رسالة توضيحية للموديل
-    if (messageText && messageText.trim() !== "") {
-        parts.push({ text: messageText });
-    } else if (media) {
-        parts.push({ text: "حلل هذه الرسالة الصوتية وقم بالرد عليها بناءً على مهامك كموظف خدمة عملاء." });
+            if (messageText && messageText.trim() !== "") {
+                parts.push({ text: messageText });
+            } else if (media) {
+                parts.push({ text: "حلل هذه الرسالة الصوتية وقم بالرد عليها بناءً على مهامك كموظف خدمة عملاء." });
+            }
+
+            const result = await chat.sendMessage(parts);
+            const textResponse = result.response.text();
+            if (textResponse && textResponse.trim().length > 0) {
+                return textResponse;
+            }
+        } catch (err) {
+            console.warn(`[Gemini Warn] الموديل ${modelName} واجه خطأ (${err.message}). جاري تجربة الموديل التالي...`);
+            lastError = err;
+        }
     }
 
-    const result = await chat.sendMessage(parts);
-    return result.response.text();
+    throw lastError || new Error("تعذر الحصول على رد من نماذج Gemini");
 }
 
-// دالة الرد البديلة عبر Llama 3 (Groq)
+// دالة الرد البديلة عبر Groq
 async function getGroqResponse(userId, messageText) {
     if (!process.env.GROQ_API_KEY) throw new Error("رابط Groq غير مفعّل");
 
@@ -123,23 +168,39 @@ async function getGroqResponse(userId, messageText) {
         { role: "user", content: messageText }
     ];
 
-    const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: "llama-3.3-70b-versatile",
-        messages: messages,
-        temperature: 0.7
-    }, {
-        headers: {
-            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-        }
-    });
+    let lastError = null;
+    for (const modelName of GROQ_MODELS) {
+        try {
+            const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+                model: modelName,
+                messages: messages,
+                temperature: 0.7
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 15000
+            });
 
-    return response.data.choices[0].message.content;
+            const content = response.data.choices[0].message.content;
+            if (content && content.trim().length > 0) {
+                return content;
+            }
+        } catch (err) {
+            console.warn(`[Groq Warn] الموديل ${modelName} واجه خطأ. جاري تجربة الموديل البديل...`);
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error("تعذر الحصول على رد من نماذج Groq");
 }
 
 const client = new Client({
     authStrategy: new LocalAuth(),
     authTimeoutMs: 120000,
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 10000,
     puppeteer: {
         headless: 'new',
         args: [
@@ -149,11 +210,50 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--disable-software-rasterizer',
             '--disable-extensions',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
             '--disable-blink-features=AutomationControlled',
             '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
         ],
     }
 });
+
+let isReconnecting = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+// دالة إعادة الاتصال التلقائي الذكية
+async function handleAutoReconnect() {
+    if (isReconnecting) return;
+    isReconnecting = true;
+
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('❌ تم بلوغ الحد الأقصى لمحاولات إعادة الاتصال. يرجى إعادة تشغيل البوت يدوياً.');
+        isReconnecting = false;
+        return;
+    }
+
+    reconnectAttempts++;
+    const delay = Math.min(30000, 5000 * reconnectAttempts);
+    console.log(`⏳ محاولة إعادة الاتصال (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) بعد ${delay / 1000} ثانية...`);
+
+    setTimeout(async () => {
+        try {
+            console.log('🔄 جاري تنظيف الجلسة وإعادة تهيئة العميل...');
+            try {
+                await client.destroy();
+            } catch (dErr) {
+                console.warn('تنبيه أثناء تفكيك المتصفح السابق:', dErr.message);
+            }
+            await client.initialize();
+        } catch (err) {
+            console.error('فشلت محاولة إعادة الاتصال:', err.message);
+            isReconnecting = false;
+            handleAutoReconnect();
+        }
+    }, delay);
+}
 
 client.on('qr', (qr) => {
     console.log('يرجى مسح رمز الاستجابة السريعة (QR Code) التالي باستخدام تطبيق واتساب:');
@@ -162,14 +262,32 @@ client.on('qr', (qr) => {
 
 client.on('authenticated', () => {
     console.log('✅ تم العثور على جلسة محفوظة. جاري الاتصال بواتساب مباشرة...');
+    reconnectAttempts = 0;
+    isReconnecting = false;
+});
+
+client.on('auth_failure', (msg) => {
+    console.error('❌ فشل مصادقة الجلسة (Auth Failure):', msg);
+    console.log('💡 إذا استمر هذا العطل، يمكن حذف مجلد .wwebjs_auth وإعادة مسح الـ QR كود.');
 });
 
 client.on('loading_screen', (percent, message) => {
     console.log(`⏳ جاري مزامنة المحادثات: ${percent}%`);
 });
 
+client.on('change_state', (state) => {
+    console.log(`🔄 تغيرت حالة اتصال واتساب إلى: ${state}`);
+});
+
+client.on('disconnected', (reason) => {
+    console.warn(`⚠️ تم انقطاع اتصال واتساب (${reason}). تفعيل إعادة الاتصال التلقائي...`);
+    handleAutoReconnect();
+});
+
 client.on('ready', () => {
     console.log('تم تشغيل البوت بنجاح! يمكنك الآن البدء في تواصل العملاء 🚀');
+    reconnectAttempts = 0;
+    isReconnecting = false;
     reloadReminders(client);
 
     // جدولة التقرير اليومي الساعة 9 مساءً بتوقيت الرياض
@@ -182,7 +300,7 @@ client.on('ready', () => {
 client.on('message_create', async (message) => {
     if (message.fromMe && !botMessages.has(message.id._serialized)) {
         const userId = message.to;
-        if (userId.includes('@c.us') && !Object.values(ADMIN_NUMBERS).includes(userId)) {
+        if (userId && userId.includes('@c.us') && !Object.values(ADMIN_NUMBERS).includes(userId)) {
             console.log(`[تنبيه] تم اكتشاف رد يدوي لـ ${userId}. تفعيل وضع الاستعداد لمدة ساعتين.`);
             db.setStandby(userId, 2);
         }
@@ -197,7 +315,7 @@ async function runBroadcast(months, text) {
     for (let i = 0; i < customers.length; i++) {
         try {
             const msg = await client.sendMessage(customers[i].userId, text);
-            botMessages.add(msg.id._serialized);
+            trackBotMessage(msg.id._serialized);
             sentCount++;
             console.log(`[بث] تم الإرسال إلى ${customers[i].userId} (${i+1}/${customers.length})`);
             // تأخير عشوائي بين 5-10 ثواني لتجنب الحظر
@@ -247,53 +365,64 @@ client.on('message', async message => {
     // تجاهل الرسائل الفارغة (إذا لم تكن صوتية)
     if (!mediaData && (!message.body || message.body.trim() === "")) return;
 
-    let chat;
-    try {
-        chat = await message.getChat();
-    } catch (chatError) {
-        console.error(`⚠️ خطأ في جلب بيانات المحادثة (${message.from}):`, chatError.message);
-        // لن نقوم بالخروج، سنكمل التنفيذ لأننا قد نكون في مرحلة المزامنة
-    }
-    
-    // التحقق من المجموعات باستخدام المعرف بدلاً من الكائن
-    if (message.from.endsWith('@g.us')) return;
+    // تجاهل المجموعات وجهات الاتصال الخاصة بالشركات/الـ(lid) قبل جلب المحادثة لتجنب رسائل الخطأ
+    if (message.from.endsWith('@g.us') || message.from.endsWith('@lid')) return;
 
     const userId = message.from;
 
-    // --- نظام أوامر الإدارة ---
-    if (Object.values(ADMIN_NUMBERS).includes(userId)) {
-        if (message.body.startsWith('!بث')) {
-            const parts = message.body.split(' ');
-            if (parts.length < 3) return message.reply('استخدم الصيغة: !بث [الأشهر] [النص]');
-            const months = parseInt(parts[1]);
-            const text = parts.slice(2).join(' ');
-            message.reply(`جاري بدء البث لـ ${months} أشهر...`);
-            runBroadcast(months, text);
-            return;
-        }
-        if (message.body.startsWith('!تفعيل')) {
-             const target = message.body.split(' ')[1] + '@c.us';
-             db.setStandby(target, 0);
-             return message.reply(`تم إلغاء وضع الاستعداد للرقم ${target}. البوت سيعاود الرد.`);
-        }
-        if (message.body.startsWith('!تعطيل')) {
-            const target = message.body.split(' ')[1] + '@c.us';
-            db.setStandby(target, 24);
-            return message.reply(`تم تعطيل البوت للرقم ${target} لمدة 24 ساعة.`);
-       }
-    }
-
-    // التحقق من وضع الاستعداد (Human-in-the-Loop)
-    if (db.getStandby(userId)) {
-        console.log(`[تخطي] العميل ${userId} في وضع الاستعداد. الرد يدوي حالياً.`);
+    // منع التداخل: إذا كان للعميل رسالة قيد المعالجة، ننتظر انتهاءها
+    if (processingUsers.has(userId)) {
+        console.log(`[انتظار] العميل ${userId} لديه رسالة قيد المعالجة الآن.`);
         return;
     }
-
-    console.log(`[رسالة جديدة] من ${userId}: ${message.body}`);
+    processingUsers.add(userId);
 
     try {
+        let chat;
+        try {
+            chat = await message.getChat();
+        } catch (chatError) {
+            console.error(`⚠️ خطأ في جلب بيانات المحادثة (${message.from}):`, chatError.message || chatError);
+        }
+
+        // --- نظام أوامر الإدارة ---
+        if (Object.values(ADMIN_NUMBERS).includes(userId)) {
+            if (message.body.startsWith('!بث')) {
+                const parts = message.body.split(' ');
+                if (parts.length < 3) {
+                    message.reply('استخدم الصيغة: !بث [الأشهر] [النص]');
+                    return;
+                }
+                const months = parseInt(parts[1]);
+                const text = parts.slice(2).join(' ');
+                message.reply(`جاري بدء البث لـ ${months} أشهر...`);
+                runBroadcast(months, text);
+                return;
+            }
+            if (message.body.startsWith('!تفعيل')) {
+                 const target = message.body.split(' ')[1] + '@c.us';
+                 db.setStandby(target, 0);
+                 message.reply(`تم إلغاء وضع الاستعداد للرقم ${target}. البوت سيعاود الرد.`);
+                 return;
+            }
+            if (message.body.startsWith('!تعطيل')) {
+                const target = message.body.split(' ')[1] + '@c.us';
+                db.setStandby(target, 24);
+                message.reply(`تم تعطيل البوت للرقم ${target} لمدة 24 ساعة.`);
+                return;
+           }
+        }
+
+        // التحقق من وضع الاستعداد (Human-in-the-Loop)
+        if (db.getStandby(userId)) {
+            console.log(`[تخطي] العميل ${userId} في وضع الاستعداد. الرد يدوي حالياً.`);
+            return;
+        }
+
+        console.log(`[رسالة جديدة] من ${userId}: ${message.body}`);
+
         if (chat) {
-            chat.sendStateTyping();
+            chat.sendStateTyping().catch(() => {});
         }
         let aiResponse = "";
 
@@ -306,8 +435,7 @@ client.on('message', async message => {
             if (mediaData) {
                 aiResponse = "نعتذر منك، لم أتمكن من معالجة الرسالة الصوتية حالياً. هل يمكنك كتابة استفسارك نصياً؟";
             } else {
-                console.log("جاري التبديل إلى Llama 3...");
-                // المحاولة الثانية: Llama 3 عبر Groq (للنصوص فقط)
+                console.log("جاري التبديل إلى المحرك الاحتياطي (Groq)...");
                 aiResponse = await getGroqResponse(userId, message.body);
             }
         }
@@ -366,33 +494,53 @@ client.on('message', async message => {
             }
         }
 
+        // محاكاة الكتابة الطبيعية وحماية الرقم من الحظر (Anti-Ban Human Delay)
+        const naturalDelay = Math.min(3000, Math.max(1000, aiResponse.length * 15 + Math.random() * 500));
+        await new Promise(r => setTimeout(r, naturalDelay));
+
         // حفظ الرسالة ورد البوت في قاعدة البيانات
         const history = db.getHistory(userId);
         const userContent = mediaData ? `[رسالة صوتية]: ${message.body || ""}` : message.body;
         history.push({ role: 'user', content: userContent });
         history.push({ role: 'assistant', content: aiResponse });
 
-        if (history.length > 20) history.shift(); // زيادة الذاكرة إلى 20 رسالة
+        if (history.length > 20) history.shift();
         db.saveHistory(userId, history);
 
         const responseMsg = await message.reply(aiResponse);
         if (responseMsg && responseMsg.id) {
-            botMessages.add(responseMsg.id._serialized);
+            trackBotMessage(responseMsg.id._serialized);
         }
 
     } catch (finalError) {
-        console.error("فشل كلا الموديلين:", finalError);
+        console.error("فشل معالجة الرسالة:", finalError);
         const fallbackMessage = `نشكر تواصلك مع مركز متخصص مازدا 🛠️\n\nنعتذر منك، نظام الرد الآلي يواجه ضغطاً مؤقتاً حالياً. \n\n*للمساعدة العاجلة، يمكنك التواصل معنا مباشرة عبر الاتصال:*
 📍 عسفان: 0535984648
 📍 كيلو 14: 0556565135
 
 أو يمكنك ترك استفسارك هنا وسيقوم أحد موظفينا بالرد عليك يدوياً في أقرب وقت. شكراً لتفهمك! ✨`;
-        message.reply(fallbackMessage);
+        message.reply(fallbackMessage).catch(() => {});
+    } finally {
+        processingUsers.delete(userId);
     }
 });
+
+// إغلاق سليم للموارد عند إيقاف تشغيل الخادم
+async function gracefulShutdown(signal) {
+    console.log(`\n🛑 استلام إشارة (${signal}). جاري إنهاء جلسة المتصفح وتحرير الذاكرة بأمان...`);
+    try {
+        await client.destroy();
+    } catch (e) {}
+    console.log('✅ تم إيقاف النظام بأمان.');
+    process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 console.log('جاري تهيئة نظام الاتصال بواتساب... (قد يستغرق 30-40 ثانية في حال وجود جلسة سابقة)');
 
 client.initialize().catch(err => {
-    console.error('خطأ قاتل أثناء التهيئة العميل:', err);
+    console.error('خطأ أثناء التهيئة الأولية:', err);
+    handleAutoReconnect();
 });

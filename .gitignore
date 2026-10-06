@@ -12,3 +12,6 @@ scratch/
 test_greeting.js
 *.xlsx
 *.csv
+.wwebjs_auth_backup/
+logs/
+
