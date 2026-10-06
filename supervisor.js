@@ -21,7 +21,18 @@ function log(msg) {
 function cleanLingeringChrome() {
     try {
         if (process.platform === 'win32') {
-            execSync('taskkill /f /im chrome.exe /fi "memusage lt 120000" >nul 2>&1');
+            try {
+                execSync('powershell -NoProfile -Command "Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.Path -like \'*puppeteer*\' } | Stop-Process -Force -ErrorAction SilentlyContinue"', { stdio: 'ignore' });
+            } catch (e) {}
+        }
+        // تنظيف ملفات القفل العالقة في مجلد الجلسة
+        const lockfile1 = path.join(__dirname, '.wwebjs_auth', 'session', 'lockfile');
+        const lockfile2 = path.join(__dirname, '.wwebjs_auth', 'session', 'Default', 'LOCK');
+        if (fs.existsSync(lockfile1)) {
+            try { fs.unlinkSync(lockfile1); } catch (e) {}
+        }
+        if (fs.existsSync(lockfile2)) {
+            try { fs.unlinkSync(lockfile2); } catch (e) {}
         }
     } catch (e) {}
 }
