@@ -240,7 +240,172 @@ const maintenanceData = {
   ]
 };
 
-console.log("تم تحميل كافة بيانات جدول الصيانة بنجاح:");
-console.log(JSON.stringify(maintenanceData, null, 2));
+// تسعيرات شغل اليد للصيانة الدورية (من 10,000 إلى 160,000 كم) - جميع الأسعار شاملة الضريبة 15%
+const maintenancePricing = {
+  currency: "SAR",
+  vat_included: true,
+  labor_items: {
+    oil_and_filter: {
+      name_ar: "غيار زيت المحرك + فلتر زيت + صرة + وردة",
+      name_en: "Engine Oil + Oil Filter + Drain Plug + Washer",
+      price: 57.5,
+      applies_to: "جميع موديلات وفئات مازدا",
+      interval_note: "عند كل صيانة دورية (كل 10,000 كم)"
+    },
+    multi_point_inspection: {
+      name_ar: "كشف النقاط المتعددة والتربيط والفحص الشامل",
+      name_en: "Multi-point Inspection & Tightening",
+      price: 115,
+      applies_to: "جميع موديلات وفئات مازدا",
+      interval_note: "كل 10 آلاف كم (من 10,000 إلى 160,000 كم)",
+      includes_notes: [
+        "غيار فلاتر الهواء والمكيف شغل يدها من ضمن الحسبة (بدون أجور إضافية)",
+        "تعبئة منظف الرواسب في التانكي من ضمن الحسبة"
+      ]
+    },
+    spark_plugs: {
+      name_ar: "غيار شمعات الإشعال (البواجي)",
+      name_en: "Spark Plugs Replacement",
+      interval_note: "كل 60,000 كم للتيربو، وكل 120,000 كم لغير التيربو",
+      prices_by_model: {
+        "mazda6": 57.5,
+        "cx3": 57.5,
+        "cx30": 57.5,
+        "cx5": 57.5,
+        "mazda3": 57.5,
+        "cx9": 115,
+        "cx90": 402.5,
+        "cx60": 402.5
+      }
+    },
+    brake_fluid: {
+      name_ar: "غيار زيت الفرامل + تنسيم النظام كامل",
+      name_en: "Brake Fluid Replacement & Bleed",
+      interval_note: "كل 40,000 كم ومضاعفاتها (40k, 80k, 120k, 160k)",
+      prices_by_model: {
+        "mazda6": 172.5,
+        "cx3": 172.5,
+        "cx30": 172.5,
+        "cx5": 172.5,
+        "mazda3": 172.5,
+        "cx9": 172.5,
+        "cx90": 230, // مع برمجة
+        "cx60": 230  // مع برمجة
+      }
+    },
+    fuel_filter: {
+      name_ar: "غيار فلتر البنزين / الصفاية أو كلاهما",
+      name_en: "Fuel Filter / Strainer Replacement",
+      interval_note: "كل 60,000 كم ومضاعفاتها (60k, 120k)",
+      prices_by_model: {
+        "mazda6": 172.5,
+        "cx3": 172.5,
+        "cx30": 172.5,
+        "cx5": 172.5,
+        "mazda3": 172.5,
+        "cx9": 172.5,
+        "cx90": 230,
+        "cx60": 230
+      }
+    }
+  }
+};
 
-module.exports = maintenanceData;
+// الدالة المساعدة لحساب تكلفة الصيانة بدقة لأي موديل وأي ممشى
+function calculateMaintenanceCost(modelName = 'mazda6', mileageKm = 10000, isTurbo = false) {
+  const normModel = (modelName || '').toLowerCase().replace(/[\s\-_]/g, '');
+  let modelKey = 'mazda6';
+  if (normModel.includes('cx90')) modelKey = 'cx90';
+  else if (normModel.includes('cx60')) modelKey = 'cx60';
+  else if (normModel.includes('cx9')) modelKey = 'cx9';
+  else if (normModel.includes('cx5')) modelKey = 'cx5';
+  else if (normModel.includes('cx30')) modelKey = 'cx30';
+  else if (normModel.includes('cx3')) modelKey = 'cx3';
+  else if (normModel.includes('3')) modelKey = 'mazda3';
+
+  const items = [];
+  let totalCost = 0;
+
+  // 1. كشف النقاط المتعددة (ثابت في كل صيانة من 10k إلى 160k)
+  const inspection = maintenancePricing.labor_items.multi_point_inspection.price;
+  items.push({
+    item_ar: "كشف النقاط المتعددة والتربيط والفحص الشامل (يشمل فلاتر الهواء والمكيف وتعبئة منظف الرواسب)",
+    cost: inspection
+  });
+  totalCost += inspection;
+
+  // 2. غيار زيت المحرك وفلتر الزيت والصرة والوردة (ثابت في كل صيانة)
+  const oil = maintenancePricing.labor_items.oil_and_filter.price;
+  items.push({
+    item_ar: "أجور غيار زيت المحرك + فلتر زيت + صرة + وردة",
+    cost: oil
+  });
+  totalCost += oil;
+
+  // 3. زيت الفرامل وتنسيم النظام (كل 40,000 كم ومضاعفاتها)
+  if (mileageKm % 40000 === 0 && mileageKm > 0) {
+    const brakeCost = maintenancePricing.labor_items.brake_fluid.prices_by_model[modelKey] || 172.5;
+    items.push({
+      item_ar: modelKey === 'cx90' || modelKey === 'cx60' 
+        ? "غيار زيت الفرامل + تنسيم النظام كامل مع البرمجة"
+        : "غيار زيت الفرامل + تنسيم النظام كامل",
+      cost: brakeCost
+    });
+    totalCost += brakeCost;
+  }
+
+  // 4. فلتر البنزين / الصفاية (كل 60,000 كم ومضاعفاتها)
+  if (mileageKm % 60000 === 0 && mileageKm > 0) {
+    const fuelCost = maintenancePricing.labor_items.fuel_filter.prices_by_model[modelKey] || 172.5;
+    items.push({
+      item_ar: "غيار فلتر البنزين / الصفاية أو كلاهما",
+      cost: fuelCost
+    });
+    totalCost += fuelCost;
+  }
+
+  // 5. البواجي (التيربو كل 60k، العادي كل 120k)
+  const isSparkDue = (isTurbo && mileageKm % 60000 === 0 && mileageKm > 0) || 
+                     (!isTurbo && mileageKm % 120000 === 0 && mileageKm > 0);
+  if (isSparkDue) {
+    const sparkCost = maintenancePricing.labor_items.spark_plugs.prices_by_model[modelKey] || 57.5;
+    items.push({
+      item_ar: `غيار شمعات الإشعال (البواجي)${isTurbo ? ' - محرك تيربو' : ''}`,
+      cost: sparkCost
+    });
+    totalCost += sparkCost;
+  }
+
+  return {
+    model: modelKey,
+    mileageKm,
+    items,
+    totalLaborCost: totalCost,
+    currency: "ريال",
+    vat_included: true,
+    labor_only: true,
+    note: "الأسعار تخص أجور اليد فقط شاملة ضريبة القيمة المضافة 15%، ولا تشمل قيمة قطع الغيار أو الزيوت."
+  };
+}
+
+// Helper function to get service items for a specific mileage (e.g. 10000, 20000, 40000, 60000)
+function getServiceByMileage(mileageKm) {
+  const k = `${Math.round(mileageKm / 1000)}k`;
+  return maintenanceData.maintenance_items.filter(item => {
+    if (item.action === '.') return true;
+    if (item.schedule) {
+      if (item.schedule['10k-150k']) return true;
+      if (item.schedule[k]) return true;
+    }
+    if (item.interval_note && item.interval_note.includes(`${mileageKm.toLocaleString()}`)) return true;
+    return false;
+  });
+}
+
+module.exports = {
+  maintenanceData,
+  maintenancePricing,
+  calculateMaintenanceCost,
+  getServiceByMileage
+};
+

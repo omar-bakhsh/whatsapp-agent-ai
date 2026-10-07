@@ -45,7 +45,7 @@ let isExiting = false;
 function startBot() {
     if (isExiting) return;
 
-    log('🚀 جاري بدء تشغيل بوت واتساب الذكي...');
+    log('🚀 Starting WhatsApp AI Bot...');
     cleanLingeringChrome();
 
     childProcess = spawn('node', ['index.js'], {
@@ -55,12 +55,12 @@ function startBot() {
     });
 
     childProcess.on('error', (err) => {
-        log(`❌ خطأ في تشغيل العملية: ${err.message}`);
+        log(`❌ Process execution error: ${err.message}`);
     });
 
     childProcess.on('exit', (code, signal) => {
         if (isExiting) {
-            log('تم إيقاف المراقب بنجاح.');
+            log('Supervisor stopped cleanly.');
             process.exit(0);
         }
 
@@ -72,10 +72,10 @@ function startBot() {
         }
         lastRestartTime = now;
 
-        log(`⚠️ توقفت عملية البوت (كود: ${code}, إشارة: ${signal}).`);
+        log(`⚠️ Bot process exited (code: ${code}, signal: ${signal}).`);
 
         const delay = Math.min(30000, 3000 * Math.min(restartsCount, 10));
-        log(`⏳ سيتم إعادة التشغيل التلقائي بعد ${delay / 1000} ثانية...`);
+        log(`⏳ Auto-restarting bot in ${delay / 1000} seconds...`);
 
         setTimeout(() => {
             startBot();
@@ -84,7 +84,7 @@ function startBot() {
 }
 
 function handleSignal(signal) {
-    log(`🛑 استلام إشارة (${signal}). جاري إيقاف البوت والمراقب بأمان...`);
+    log(`🛑 Signal received (${signal}). Stopping bot and supervisor safely...`);
     isExiting = true;
     if (childProcess) {
         childProcess.kill(signal);
@@ -98,6 +98,6 @@ process.on('SIGINT', () => handleSignal('SIGINT'));
 process.on('SIGTERM', () => handleSignal('SIGTERM'));
 
 log('==================================================');
-log('🛡️ تم تفعيل نظام المراقبة والحماية التلقائية 24/7');
+log('🛡️ 24/7 Watchdog and Auto-Supervisor active');
 log('==================================================');
 startBot();

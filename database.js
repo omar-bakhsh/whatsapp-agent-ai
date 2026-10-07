@@ -97,12 +97,26 @@ function saveHistory(userId, history) {
 }
 
 function setStandby(userId, hours) {
+    if (hours <= 0) {
+        db.prepare(`
+            UPDATE sessions SET standbyUntil = NULL WHERE userId = ? OR userId LIKE ?
+        `).run(userId, `%${userId}%`);
+        return;
+    }
     const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
     db.prepare(`
         INSERT INTO sessions (userId, standbyUntil)
         VALUES (?, ?)
         ON CONFLICT(userId) DO UPDATE SET standbyUntil = excluded.standbyUntil
     `).run(userId, until);
+}
+
+function clearStandby(userId = null) {
+    if (!userId || userId === 'all' || userId === 'الكل') {
+        db.prepare("UPDATE sessions SET standbyUntil = NULL").run();
+    } else {
+        db.prepare("UPDATE sessions SET standbyUntil = NULL WHERE userId = ? OR userId LIKE ?").run(userId, `%${userId}%`);
+    }
 }
 
 function getStandby(userId) {
@@ -215,6 +229,7 @@ module.exports = {
     getAllCustomers,
     getMonthlyStats,
     setStandby,
+    clearStandby,
     getStandby,
     getInactiveCustomers,
     saveBroadcastLog,
